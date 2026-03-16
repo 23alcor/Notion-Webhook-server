@@ -1,13 +1,20 @@
 import os
 import time
 import requests
+import threading
+from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 
 from ai.notion_ai import ai_think
 from ai.openai_client import build_deadlines_callout
 
 router = APIRouter()
+
+# Debounce deadline refreshes to avoid repeated expensive work during event bursts.
+_DEADLINE_MIN_INTERVAL_SECONDS = 20.0
+_deadline_lock = threading.Lock()
+_last_deadline_update_monotonic = 0.0
 
 # region backend
 
@@ -224,7 +231,8 @@ def update_page_text(page_id, text):
         }
     }
 
-    r = requests.patch(url, headers=_notion_headers(), json=body)
+    r = requests.patch(url, headers=_notion_headers(), json=body, timeout=(5, 20))
+    r.raise_for_status()
     return r.json()
 
 # region deadline code
@@ -239,7 +247,7 @@ def change_deadline_text(rich_text, block_id: str | None = None):
         }
     }
 
-    r = requests.patch(url, headers=_notion_headers(), json=body)
+    r = requests.patch(url, headers=_notion_headers(), json=body, timeout=(5, 20))
     r.raise_for_status()
     return r.json()
 
@@ -258,6 +266,52 @@ def update_deadline_text():
     deadline_rich_text = build_deadlines_callout(parsed_todo)
     change_deadline_text(deadline_rich_text)
     print("Deadline was changed")
+
+
+def _maybe_update_deadline_text() -> None:
+    global _last_deadline_update_monotonic
+
+    now = time.monotonic()
+    with _deadline_lock:
+        if now - _last_deadline_update_monotonic < _DEADLINE_MIN_INTERVAL_SECONDS:
+            print("Skipped deadline update due to debounce window.")
+            return
+        _last_deadline_update_monotonic = now
+
+    update_deadline_text()
+
+
+def _process_notion_event(data: dict[str, Any]) -> None:
+    try:
+        event_type = data.get("type", "")
+        entity = data.get("entity") or {}
+        page_id = entity.get("id")
+
+        if not page_id:
+            print("Webhook payload missing page id; skipping.")
+            return
+
+        # Keep deadline block reasonably fresh while avoiding N updates per burst.
+        _maybe_update_deadline_text()
+
+        if event_type != "page.created":
+            print("Page edited but not created, skipping page review.")
+            return
+
+        load = read_page(page_id)
+        title_items = load.get("properties", {}).get("Name", {}).get("title", [])
+        title = title_items[0].get("plain_text", "") if title_items else ""
+        if not title:
+            title = "Untitled"
+
+        print("New page created.")
+        review = ai_think(title)
+        update_page_text(page_id, review)
+        print("Updated the page.")
+    except requests.exceptions.RequestException as exc:
+        print(f"[REQUEST ERROR] webhook background task failed: {exc}")
+    except Exception as exc:
+        print(f"[ERROR] webhook background task failed: {exc}")
 
 # endregion
 
@@ -361,32 +415,19 @@ def parse_blocks_readable(blocks):
 
 
 @router.post("/notion-webhook")
-async def notion_webhook(request: Request):
-    data = await request.json()
-    page_id = data["entity"]["id"]
-    load = read_page(page_id)
-    
-    # This section updates the deadline
-    update_deadline_text()
+async def notion_webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
 
-    print(data)
+    # Handle Notion webhook verification challenge
+    if "challenge" in data:
+        return {"challenge": data["challenge"]}
 
-    event_type = data["type"]
-    if event_type == "page.created":
-        title_items = load.get("properties", {}).get("Name", {}).get("title", [])
-        title = title_items[0].get("plain_text", "") if title_items else ""
-        if not title:
-            title = "Untitled"
-        print("New page created.")
-
-        review = ai_think(title)
-
-        update_page_text(page_id, review)
-        print("Updated the page.")
-    else:
-        print("Page edited but not created, skipping any actions.")
-
-    return {"status": "ok"}
+    # Acknowledge quickly; process heavy work after returning response.
+    background_tasks.add_task(_process_notion_event, data)
+    return {"status": "accepted"}
 
 
 @router.get("/test")
