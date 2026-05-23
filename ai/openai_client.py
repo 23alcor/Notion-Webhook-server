@@ -94,7 +94,7 @@ def build_deadlines_callout(todos: list[dict]) -> list[dict]:
 
     def _parse_due_date(raw_due: str | None) -> date | None:
         if not raw_due:
-            return None
+            return date.today()
         raw_due = raw_due.strip()
         if not raw_due:
             return None
