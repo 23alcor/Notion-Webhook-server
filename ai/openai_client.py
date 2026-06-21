@@ -1,4 +1,3 @@
-# ai/openai_client.py
 from openai import OpenAI
 import os
 from datetime import date, datetime
@@ -14,10 +13,10 @@ def get_openai_client():
         key = os.getenv("OPENAI_API_KEY_PROJECT")
         if not key:
             raise RuntimeError("OPENAI_API_KEY missing")
-
     return OpenAI(api_key=key)
+
 # region SYSTEM PROMPT
-prompt = """ 
+prompt = """
 You are an assistant that interprets short personal notes written for future reference, planning, or decision-making.
 
 Your job is to:
@@ -50,15 +49,14 @@ Special handling for purchases:
 Output format (exactly this structure):
 
 Context:
-- 1–2 bullets explaining what this note is about and why it matters.
+- 1-2 bullets explaining what this note is about and why it matters.
 
 Key Points:
-- 2–4 bullets summarizing findings or considerations.
+- 2-4 bullets summarizing findings or considerations.
 
 Options:
 - Cheap:
-  - Name – short reason (approx. price, link)
-  - Name – short reason (approx. price, link)
+  - Name - short reason (approx. price, link)
 - Mid-tier:
   - ...
 - Premium:
@@ -74,8 +72,6 @@ Metadata:
 # endregion
 
 
-
-
 def summarize(text: str) -> str:
     client = get_openai_client()
     resp = client.chat.completions.create(
@@ -88,79 +84,144 @@ def summarize(text: str) -> str:
     return resp.choices[0].message.content
 
 
-def build_deadlines_callout(todos: list[dict]) -> list[dict]:
-    if not todos:
-        return [{"type": "text", "text": {"content": "No deadlines yet."}}]
-
-    def _parse_due_date(raw_due: str | None) -> date | None:
-        if not raw_due:
-            return date.today()
-        raw_due = raw_due.strip()
-        if not raw_due:
+def _parse_due_date(raw_due: str | None) -> date | None:
+    if not raw_due:
+        return date.today()
+    raw_due = raw_due.strip()
+    if not raw_due:
+        return None
+    try:
+        return date.fromisoformat(raw_due[:10])
+    except ValueError:
+        try:
+            return datetime.fromisoformat(raw_due.replace("Z", "+00:00")).date()
+        except ValueError:
             return None
 
-        # Handles "YYYY-MM-DD" and Notion datetime strings like "YYYY-MM-DDTHH:MM:SS.sssZ".
-        try:
-            return date.fromisoformat(raw_due[:10])
-        except ValueError:
-            try:
-                return datetime.fromisoformat(raw_due.replace("Z", "+00:00")).date()
-            except ValueError:
-                return None
+def build_deadlines_callout(items: list[dict]) -> list[dict]:
+    from collections import defaultdict
+
+    if not items:
+        return [{"type": "text", "text": {"content": "No deadlines yet."}}]
 
     today = date.today()
-    ranked: list[tuple[int, int, str]] = []
 
-    for idx, todo in enumerate(todos):
-        item = (todo.get("item") or "Untitled").strip() or "Untitled"
-        due = _parse_due_date(todo.get("date_due"))
-        if due is None:
-            # Put unknown due dates after known ones while preserving input order.
-            ranked.append((1, idx, item))
-            continue
-        days_left = (due - today).days
-        ranked.append((0, days_left, item))
+    def get_days(item):
+        due = _parse_due_date(item.get("due_date") or item.get("date_due"))
+        return 0 if due is None else (due - today).days
 
-    ranked.sort(key=lambda x: (x[0], x[1]))
+    def color(d):
+        return "red" if d <= 0 else "orange" if d <= 2 else "green"
 
-    rich_text: list[dict] = []
-    for idx, (group, value, item) in enumerate(ranked):
-        has_known_due = group == 0
-        if has_known_due:
-            urgency_days = value
-            left = f"{urgency_days} Days Left"
+    def entry(d, title):
+        return {"type": "text", "text": {"content": f"{d} - {title}\n"}, "annotations": {"bold": True, "color": color(d)}}
+
+    todos = sorted([i for i in items if i.get("source") == "todo"], key=get_days)
+    tasks = [i for i in items if i.get("source") == "task"]
+
+    rich_text = []
+
+    for todo in todos:
+        title = (todo.get("title") or todo.get("item") or "Untitled").strip()
+        rich_text.append(entry(get_days(todo), title))
+
+    by_project = defaultdict(list)
+    for task in tasks:
+        by_project[task.get("project_name", "Other")].append(task)
+
+    if by_project:
+        rich_text.append({"type": "text", "text": {"content": "\n"}, "annotations": {"bold": False, "color": "default"}})
+        for project_name, project_tasks in sorted(by_project.items()):
+            rich_text.append({"type": "text", "text": {"content": f"{project_name}\n"}, "annotations": {"bold": True, "color": "default"}})
+            for task in sorted(project_tasks, key=get_days):
+                rich_text.append(entry(get_days(task), task.get("title", "Untitled").strip()))
+
+    return rich_text[:100]
+
+def build_important_things_callout(items: list[dict]) -> list[dict]:
+    from ai.google_calendar import get_today_events, get_tomorrow_events, format_events
+
+    today = date.today()
+    now = datetime.now()
+    hour = now.hour
+
+    # --- Greeting ---
+    if hour < 12:
+        greeting = "Good morning Ralph"
+    elif hour < 18:
+        greeting = "Good afternoon Ralph"
+    else:
+        greeting = "Day is almost over Ralph"
+
+    # --- Calendar (fetch once) ---
+    tomorrow_events = get_tomorrow_events()
+    tomorrow_str = format_events(tomorrow_events)
+
+    # --- Task counts ---
+    due_count = 0
+    upcoming_count = 0
+    eventually_count = 0
+
+    for item in items:
+        due_raw = item.get("due_date")
+        source = item.get("source", "")
+        if due_raw:
+            try:
+                due = date.fromisoformat(due_raw[:10])
+                days_left = (due - today).days
+                if days_left <= 0:
+                    due_count += 1
+                elif days_left <= 7:
+                    upcoming_count += 1
+                else:
+                    eventually_count += 1
+            except ValueError:
+                eventually_count += 1
         else:
-            urgency_days = None
-            left = "Due date unclear"
+            due_count += 1   # no-date tasks = backlog
 
-        if urgency_days is None:
-            urgency_color = "default"
-        elif urgency_days <= 0:
-            urgency_color = "red"
-        elif urgency_days <= 2:
-            urgency_color = "orange"
-        else:
-            urgency_color = "green"
-
-        urgency_text = f"{left} - " if item else left
-        rich_text.append(
-            {
-                "type": "text",
-                "text": {"content": urgency_text},
-                "annotations": {"bold": True, "color": urgency_color},
-            }
+    # --- Evening sleep recommendation ---
+    sleep_line = ""
+    if hour >= 18:
+        client = get_openai_client()
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": f"Tomorrow's schedule: {tomorrow_str}. What time should I sleep tonight to get 6-7 hours before my first event? Reply in one sentence only."
+            }]
         )
+        sleep_line = resp.choices[0].message.content.strip()
 
-        if item:
-            rich_text.append(
-                {
-                    "type": "text",
-                    "text": {"content": item},
-                    "annotations": {"bold": True, "color": urgency_color},
-                }
-            )
+    # --- Build rich text ---
+    rich_text = []
 
-        if idx < len(ranked) - 1:
-            rich_text.append({"type": "text", "text": {"content": "\n"}})
+    def add(content, bold=False, color="default"):
+        rich_text.append({
+            "type": "text",
+            "text": {"content": content},
+            "annotations": {"bold": bold, "color": color},
+        })
+
+    add(greeting, bold=True)
+    add("\n\n")
+
+    if hour < 18:
+        today_events = get_today_events()
+        today_str = format_events(today_events)
+        add("Here's what you have today.\n")
+        add(today_str)
+    else:
+        add("Here's what you have tomorrow.\n")
+        add(tomorrow_str)
+
+    add("\n\n")
+    add(f"You have {due_count} due tasks.\n", bold=True, color="red" if due_count > 0 else "default")
+    add(f"You have {upcoming_count} upcoming tasks.\n", bold=True, color="orange" if upcoming_count > 0 else "default")
+    add(f"You have {eventually_count} tasks eventually.", bold=True)
+
+    if sleep_line:
+        add("\n\n")
+        add(sleep_line, color="blue")
 
     return rich_text
