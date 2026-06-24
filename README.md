@@ -1,12 +1,16 @@
 # Notion Webhook Server
+**Stack:** Python · FastAPI · Notion API · OpenAI · Google Calendar · Cloudflare Tunnel · systemd
+
 A personal automation backend that responds to changes in a Notion workspace, using AI to summarize new notes and keep task/calendar status blocks up to date, running continuously as a systemd service on a Raspberry Pi.
 
 ## Contents
 
 - [Required Software & Hardware](#required-software--hardware)
 - [Webhook Event Flow](#webhook-event-flow)
-- [How to use it](#how-it-works-updated-6222026)
+- [How to use it](#how-to-use-it-updated-6242026)
+- [Getting Started](#getting-started)
 - [Future updates](#future-updates)
+- [Security](#security)
 
 
 ## Required Software & Hardware
@@ -21,7 +25,7 @@ Everything needed to stand up this project from scratch.
 - Raspberry Pi OS (Debian-based Linux).
 - Python 3 with pip.
 - systemd — keeps webhook-server.service alive and drives the hourly webhook-refresh.timer.
-- cloudflared — Cloudflare Tunnel daemon exposing the Pi at api.alcoberlabs.xyz without opening ports.
+- cloudflared — Cloudflare Tunnel daemon exposing the Pi at api.yourdomain.xyz without opening ports.
 
 ### Accounts & Credentials
 - Notion integration — internal integration token plus the database/block IDs the server reads and writes.
@@ -65,8 +69,8 @@ Before you begin, please ensure you have the [required hardware & software](#req
 SSH into the Pi (or Raspberry Pi Connect), then:
 
 ```bash
-git clone git@github.com:23alcor/Notion-Webhook-server.git
-cd Notion-Webhook-server
+git clone git@github.com:23alcor/Notion-Webhook-server.git ~/Documents/webhook-server
+cd webhook-server
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -140,7 +144,7 @@ run the authorization on a machine that has one (e.g. your Mac).
 2. Run the local authorization script:
 
 ```bash
-   python authorize_google_local.py
+python authorize_google_local.py
 ```
 
    This opens your browser, asks you to sign in and approve access, then
@@ -148,7 +152,7 @@ run the authorization on a machine that has one (e.g. your Mac).
 3. Copy `token.json` to the Pi's project root:
 
 ```bash
-   scp token.json pi-ssh:~/Documents/webhook-server/token.json
+scp token.json pi-ssh:~/Documents/webhook-server/token.json
 ```
 
 The server now authenticates to Google using `token.json` and refreshes it
@@ -185,45 +189,45 @@ config lives on the Pi.
 1. Authenticate cloudflared (one-time, opens a browser to pick your domain):
 
 ```bash
-   cloudflared tunnel login
+cloudflared tunnel login
 ```
 
 2. Create a named tunnel (note the tunnel ID it prints):
 
 ```bash
-   cloudflared tunnel create webhook-server
+cloudflared tunnel create webhook-server
 ```
 
 3. Route your hostnames to the tunnel:
 
 ```bash
-   cloudflared tunnel route dns webhook-server api.yourdomain.xyz
-   cloudflared tunnel route dns webhook-server ssh.yourdomain.xyz
+cloudflared tunnel route dns webhook-server api.yourdomain.xyz
+cloudflared tunnel route dns webhook-server ssh.yourdomain.xyz
 ```
 
 4. Configure the tunnel in `~/.cloudflared/config.yml`:
 
 ```yaml
-   tunnel: <your-tunnel-id>
-   credentials-file: /home/<user>/.cloudflared/<your-tunnel-id>.json
+tunnel: <your-tunnel-id>
+credentials-file: /home/<user>/.cloudflared/<your-tunnel-id>.json
 
-   ingress:
-     # Web app — the FastAPI server
-     - hostname: api.yourdomain.xyz
-       service: http://localhost:8000
+ingress:
+  # Web app — the FastAPI server
+  - hostname: api.yourdomain.xyz
+    service: http://localhost:8000
 
-     # SSH access to the Pi (no port 22 open to the internet)
-     - hostname: ssh.yourdomain.xyz
-       service: ssh://localhost:22
+  # SSH access to the Pi (no port 22 open to the internet)
+  - hostname: ssh.yourdomain.xyz
+    service: ssh://localhost:22
 
-     # Required catch-all
-     - service: http_status:404
+  # Required catch-all
+  - service: http_status:404
 ```
 
 5. Run it (kept alive by systemd — see Step 8):
 
 ```bash
-   cloudflared tunnel run
+cloudflared tunnel run
 ```
 
 Your server is now reachable at `https://api.yourdomain.xyz`, and the Pi is
@@ -299,6 +303,33 @@ systemctl status webhook-server
 systemctl status webhook-refresh.timer
 ```
 
+### Step 9 — Register the webhook in Notion
+
+Finally, tell Notion to send events to your server.
+
+1. Go to your integration settings at
+   [notion.so/my-integrations](https://www.notion.so/my-integrations) and
+   open the integration you created in Step 1.
+2. Under the **Webhooks** tab, add a subscription pointing to your endpoint:
+```
+https://api.yourdomain.xyz/notion-webhook
+```
+
+3. Notion sends a one-time **verification request** with a `challenge` value.
+   Your server already handles this — it echoes the challenge back so Notion
+   can confirm the URL is yours. Watch the logs to see it arrive:
+
+```bash
+journalctl -u webhook-server -f
+```
+
+4. Once verified, subscribe to the event types the server handles (e.g.
+   `page.created` and database/page content updates) and save.
+5. Make sure the integration is shared with the databases it needs to read
+   (Todo, Tasks) and the page holding the callout blocks.
+
+Now create a task in Notion using the "Quick Thought" button — within a few
+seconds the server should process the event and update the page.
 
 
 
@@ -306,28 +337,38 @@ systemctl status webhook-refresh.timer
 
 
 
-## How it works (Updated 6/22/2026)
 
-1. ### Add a new task to Todo database using the "Quick Thought" button
+## How to use it (Updated 6/24/2026)
+
+![Demo](docs/assets/demo.gif)
+*Video sped up 2x*
+
+1. **Add a new task to Todo database using the "Quick Thought" button.**
 
 ![Image showing the todo database and quick add button](docs/images/image1.png)
+![Image showing the todo database and quick add button configuration](docs/images/image9.png)
 
-2. ### Notion will send a webhook to server. The server will generate a helpful note about the item through the OpenAI API and insert into the todo description for the todo item.
+2. **Notion will send a webhook to server. The server will generate a helpful note about the item through the OpenAI API and insert into the todo description for the todo item.**
 
 ![Image showing the AI generated description for the todo item](docs/images/image2.png)
 
-3. ### Add your own projects and tasks in each project
+3. **Add your own projects and tasks in each project.**
 
 ![Image showing the projects database](docs/images/image3.png)
 ![Image showing the projects tasks](docs/images/image4.png)
 
-4. ### The due dates for every item in the Todo database and Task item from projects will appear here
+4. **The due dates for every item in the Todo database and Task item from projects will appear here.**
 
 ![Image showing the deadlines of every todo and task item](docs/images/image5.png)
 
-5. ### A dynamic callout based off the time of the day and how many tasks are due, events planned for today or tomorrow, as well as recommendations for planning sleep time.
+5. **A dynamic callout based off the time of the day and how many tasks are due, events planned for today or tomorrow, as well as recommendations for planning sleep time.**
 
 ![Image showing the important things today](docs/images/image6.png)
+
+6. **You can click "Update Page" to refresh both "Important Things today" and "Deadlines"**
+
+![Refresh button](docs/images/image7.png)
+![Refresh button Call](docs/images/image8.png)
 
 ## Future updates
 
@@ -335,3 +376,10 @@ systemctl status webhook-refresh.timer
 - Planning todos suggestments for tomorrow
 - Add testing webhooks
 - Switch AI provider
+
+## Security
+
+- **Secrets stay out of git.** `.env`, `credentials.json`, and `token.json` are gitignored; config is loaded at runtime, never hardcoded.
+- **No open inbound ports.** The Pi is reachable only through the Cloudflare Tunnel (web + SSH), so nothing is exposed directly to the internet.
+- **Least-privilege Google access.** Calendar uses the read-only `calendar.readonly` scope.
+- **Planned hardening:** verify Notion's webhook signature (HMAC) on `/notion-webhook`, and set an OpenAI spend cap as a billing backstop.
