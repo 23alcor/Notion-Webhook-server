@@ -1,6 +1,17 @@
+# Secrets & credentials (NEVER commit)
 .env
+credentials.json
+token.json
+
+# Python
 .venv
 __pycache__/
 *.pyc
-credentials.json
-token.json
+
+# Editor / backup files
+*.save
+*~
+*.swp
+
+# OS junk
+.DS_Store
