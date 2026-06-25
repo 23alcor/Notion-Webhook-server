@@ -5,12 +5,45 @@ A personal automation backend that responds to changes in a Notion workspace, us
 
 ## Contents
 
+- [How to use it](#how-to-use-it-updated-6242026)
 - [Required Software & Hardware](#required-software--hardware)
 - [Webhook Event Flow](#webhook-event-flow)
-- [How to use it](#how-to-use-it-updated-6242026)
 - [Getting Started](#getting-started)
 - [Future updates](#future-updates)
 - [Security](#security)
+
+
+## How to use it (Updated 6/24/2026)
+
+![Demo](docs/assets/demo.gif)
+*Video sped up 2x*
+
+1. **Add a new task to Todo database using the "Quick Thought" button.**
+
+![Image showing the todo database and quick add button](docs/images/image1.png)
+![Image showing the todo database and quick add button configuration](docs/images/image9.png)
+
+2. **Notion will send a webhook to server. The server will generate a helpful note about the item through the OpenAI API and insert into the todo description for the todo item.**
+
+![Image showing the AI generated description for the todo item](docs/images/image2.png)
+
+3. **Add your own projects and tasks in each project.**
+
+![Image showing the projects database](docs/images/image3.png)
+![Image showing the projects tasks](docs/images/image4.png)
+
+4. **The due dates for every item in the Todo database and Task item from projects will appear here.**
+
+![Image showing the deadlines of every todo and task item](docs/images/image5.png)
+
+5. **A dynamic callout based off the time of the day and how many tasks are due, events planned for today or tomorrow, as well as recommendations for planning sleep time.**
+
+![Image showing the important things today](docs/images/image6.png)
+
+6. **You can click "Update Page" to refresh both "Important Things today" and "Deadlines"**
+
+![Refresh button](docs/images/image7.png)
+![Refresh button Call](docs/images/image8.png)
 
 
 ## Required Software & Hardware
@@ -338,37 +371,7 @@ seconds the server should process the event and update the page.
 
 
 
-## How to use it (Updated 6/24/2026)
 
-![Demo](docs/assets/demo.gif)
-*Video sped up 2x*
-
-1. **Add a new task to Todo database using the "Quick Thought" button.**
-
-![Image showing the todo database and quick add button](docs/images/image1.png)
-![Image showing the todo database and quick add button configuration](docs/images/image9.png)
-
-2. **Notion will send a webhook to server. The server will generate a helpful note about the item through the OpenAI API and insert into the todo description for the todo item.**
-
-![Image showing the AI generated description for the todo item](docs/images/image2.png)
-
-3. **Add your own projects and tasks in each project.**
-
-![Image showing the projects database](docs/images/image3.png)
-![Image showing the projects tasks](docs/images/image4.png)
-
-4. **The due dates for every item in the Todo database and Task item from projects will appear here.**
-
-![Image showing the deadlines of every todo and task item](docs/images/image5.png)
-
-5. **A dynamic callout based off the time of the day and how many tasks are due, events planned for today or tomorrow, as well as recommendations for planning sleep time.**
-
-![Image showing the important things today](docs/images/image6.png)
-
-6. **You can click "Update Page" to refresh both "Important Things today" and "Deadlines"**
-
-![Refresh button](docs/images/image7.png)
-![Refresh button Call](docs/images/image8.png)
 
 ## Future updates
 
