@@ -5,7 +5,6 @@ import os
 print("OPENAI_API_KEY present:", bool(os.getenv("OPENAI_API_KEY")))
 
 from fastapi import FastAPI, Request
-from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -19,12 +18,3 @@ app.include_router(notion_router)
 def health():
     return {"status": "ok"}
 
-class WebhookPayload(BaseModel):
-    item: str
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    payload = await request.json()
-    print("Received payload:")
-    print(payload)
-    return {"status": payload}

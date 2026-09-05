@@ -4,10 +4,13 @@ import httpx
 import threading
 from queue import Queue
 from typing import Any
+import hmac
+import hashlib
+import json
 
 
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Header, Depends
 
 from ai.notion_ai import ai_think
 from ai.openai_client import build_deadlines_callout
@@ -451,18 +454,49 @@ def parse_blocks_readable(blocks):
     return [parse_block(b) for b in (blocks or [])]
 
 
+def _verify_notion_signature(raw_body: bytes, header_sig):
+    secret = os.getenv("NOTION_WEBHOOK_SECRET")
+    if not secret or not header_sig:
+        return False
+    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header_sig)
+
+
+def _require_test_token(authorization: str = Header(default=None)):
+    """Reject /test hits without a matching Bearer token."""
+    secret = os.getenv("TEST_TOKEN")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Test endpoint not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    if not hmac.compare_digest(authorization[7:], secret):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
 @router.post("/notion-webhook")
 async def notion_webhook(request: Request):
+    raw = await request.body()
     try:
-        data = await request.json()
-    except Exception:
+        data = json.loads(raw or b"{}")
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid JSON payload.")
 
-    # Handle Notion webhook verification challenge
-    if "challenge" in data:
+    # One-time subscription handshake: Notion sends verification_token once.
+    if isinstance(data, dict) and "verification_token" in data:
+        print("[NOTION] verification_token:", data["verification_token"])
+        return {"status": "ok"}
+
+    # Back-compat: some setups echo a challenge.
+    if isinstance(data, dict) and "challenge" in data:
         return {"challenge": data["challenge"]}
 
-    # Enqueue for background processing; return immediately.
+    secret = os.getenv("NOTION_WEBHOOK_SECRET")
+    if secret:
+        if not _verify_notion_signature(raw, request.headers.get("X-Notion-Signature")):
+            raise HTTPException(status_code=401, detail="Invalid signature")
+    else:
+        print("[NOTION][WARN] NOTION_WEBHOOK_SECRET not set - signature check DISABLED (fail-open).")
+
     _event_queue.put(data)
     return {"status": "accepted"}
 
@@ -580,7 +614,7 @@ def update_important_things_text():
     change_deadline_text(rich_text, block_id=block_id)
     print("Important things was changed")
 
-@router.get("/test")
+@router.get("/test", dependencies=[Depends(_require_test_token)])
 async def test_webhook():
     try:
         from ai.google_calendar import get_tomorrow_events, format_events
@@ -594,7 +628,7 @@ async def test_webhook():
         traceback.print_exc()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-@router.post("/test")
+@router.post("/test", dependencies=[Depends(_require_test_token)])
 async def test_webhook_post():
     try:
         update_deadline_text()
@@ -605,7 +639,7 @@ async def test_webhook_post():
         traceback.print_exc()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-@router.get("/debug-items")
+@router.get("/debug-items", dependencies=[Depends(_require_test_token)])
 async def debug_items():
     from datetime import date
     items = get_combined_items()

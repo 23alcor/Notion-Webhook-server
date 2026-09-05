@@ -23,6 +23,40 @@ def _local_day_to_utc(local_dt: datetime) -> datetime:
     return (local_dt - offset).replace(tzinfo=timezone.utc)
 
 
+# --- Calendar filtering -------------------------------------------------
+# Exact calendar IDs to skip. A calendar shared with you usually has the
+# owner's email address as its ID. Override without a code change via env:
+DEFAULT_EXCLUDED_CALENDARS = "saraalfanek@gmail.com"
+EXCLUDED_CALENDAR_IDS = {
+    c.strip().lower()
+    for c in os.getenv("EXCLUDED_CALENDARS", DEFAULT_EXCLUDED_CALENDARS).split(",")
+    if c.strip()
+}
+
+# Substrings matched against the calendar ID *and* its display name.
+EXCLUDED_CALENDAR_KEYWORDS = ()
+
+
+def _is_excluded(calendar: dict) -> bool:
+    cal_id = (calendar.get("id") or "").lower()
+    name = (calendar.get("summaryOverride") or calendar.get("summary") or "").lower()
+    if cal_id in EXCLUDED_CALENDAR_IDS:
+        return True
+    return any(
+        k.lower() in cal_id or k.lower() in name
+        for k in EXCLUDED_CALENDAR_KEYWORDS
+    )
+
+
+def list_calendars() -> None:
+    """Print every calendar on the account so you can copy exact IDs."""
+    service = build("calendar", "v3", credentials=_get_credentials())
+    for cal in service.calendarList().list().execute().get("items", []):
+        flag = "SKIP" if _is_excluded(cal) else "keep"
+        name = cal.get("summaryOverride") or cal.get("summary")
+        print(f"[{flag}] {name}  ->  {cal['id']}  ({cal.get('accessRole')})")
+
+
 def _get_all_events(time_min: datetime, time_max: datetime) -> list:
     creds = _get_credentials()
     service = build("calendar", "v3", credentials=creds)
@@ -32,6 +66,11 @@ def _get_all_events(time_min: datetime, time_max: datetime) -> list:
 
     for calendar in calendar_list.get("items", []):
         cal_id = calendar["id"]
+
+        if _is_excluded(calendar):
+            print(f"[CALENDAR] Excluding {cal_id}")
+            continue
+
         try:
             result = service.events().list(
                 calendarId=cal_id,

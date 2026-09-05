@@ -15,3 +15,8 @@ __pycache__/
 
 # OS junk
 .DS_Store
+
+# Backup files created by patch scripts
+*.bak
+*.bak.*
+.env.bak.*
