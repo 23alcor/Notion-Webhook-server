@@ -20,3 +20,10 @@ __pycache__/
 *.bak
 *.bak.*
 .env.bak.*
+
+# Test & coverage artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

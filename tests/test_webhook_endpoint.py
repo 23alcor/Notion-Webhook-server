@@ -78,10 +78,10 @@ def test_tampered_body_rejected(monkeypatch):
     assert r.status_code == 401
 
 
-def test_fail_open_when_no_secret(monkeypatch):
-    """When NOTION_WEBHOOK_SECRET is unset the endpoint currently fails open."""
+def test_fails_closed_when_no_secret(monkeypatch):
+    """When NOTION_WEBHOOK_SECRET is unset the endpoint must REJECT (fail-closed)."""
     monkeypatch.delenv("NOTION_WEBHOOK_SECRET", raising=False)
     body = json.dumps({"type": "page.updated"}).encode()
     r = client.post("/notion-webhook", content=body, headers={"Content-Type": "application/json"})
-    assert r.status_code == 200
-    assert r.json() == {"status": "accepted"}
+    assert r.status_code == 503
+    assert "not configured" in r.json()["detail"].lower()
