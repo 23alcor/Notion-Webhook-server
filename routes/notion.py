@@ -785,3 +785,154 @@ async def create_todo(request: Request):
     }
 
 # endregion
+
+
+# region links
+
+def _fetch_page_title(url: str, *, timeout_seconds: float = 10.0) -> str | None:
+    """
+    Best-effort fetch of a web page's <title>.
+
+    Returns the cleaned title text, or None if it can't be determined
+    (network error, non-HTML response, no <title> tag, etc.).
+    """
+    import re
+    import html as _html
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml",
+    }
+    try:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout_seconds),
+            headers=headers,
+        ) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "html" not in content_type.lower():
+                return None
+            match = re.search(
+                r"<title[^>]*>(.*?)</title>",
+                response.text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if not match:
+                return None
+            title = _html.unescape(match.group(1)).strip()
+            title = re.sub(r"\s+", " ", title)
+            return title or None
+    except Exception:
+        return None
+
+
+def create_link_page(*, url: str, name: str | None = None) -> dict:
+    """
+    Save a URL as a new page in the Links database (NOTION_LINKS_ID).
+
+    Properties:
+      Name (title)      - explicit name, else the fetched <title>, else the URL
+      URL (url)         - the link
+      Date Added (date) - today's date
+    """
+    from datetime import date
+
+    database_id = _require_env("NOTION_LINKS_ID")
+
+    if not url or not str(url).strip():
+        raise ValueError("url is required")
+
+    url = str(url).strip()
+    if not url.lower().startswith(("http://", "https://")):
+        url = "https://" + url
+
+    title = (name or "").strip() or None
+    if not title:
+        title = _fetch_page_title(url) or url
+
+    properties: dict[str, Any] = {
+        "Name": {"title": [{"text": {"content": title[:2000]}}]},
+        "URL": {"url": url},
+        "Date Added": {"date": {"start": date.today().isoformat()}},
+    }
+
+    payload = {
+        "parent": {"database_id": database_id},
+        "properties": properties,
+    }
+
+    api_url = "https://api.notion.com/v1/pages"
+    timeout = httpx.Timeout(30.0)
+    max_retries = 3
+
+    with httpx.Client(timeout=timeout) as client:
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = client.post(api_url, headers=_notion_headers(), json=payload)
+                response.raise_for_status()
+                return response.json()
+            except httpx.ReadTimeout:
+                if attempt == max_retries:
+                    raise
+                time.sleep(0.5 * attempt)
+
+
+@router.post("/links", dependencies=[Depends(_require_test_token)])
+async def create_link(request: Request):
+    """
+    Save a URL to the Links database (Job Apps & More).
+
+    Auth: Bearer TEST_TOKEN (same as /todos and /test endpoints).
+
+    Body (JSON):
+      {
+        "url":  "https://example.com/article",  # required
+        "name": "Optional custom title"         # optional; if omitted the
+                                                # server fetches the page <title>
+      }
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object.")
+
+    url = data.get("url")
+    if not url or not str(url).strip():
+        raise HTTPException(status_code=400, detail="'url' is required.")
+
+    try:
+        page = create_link_page(url=url, name=data.get("name"))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Notion API error: {exc.response.status_code} {exc.response.text}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Notion request failed: {exc}",
+        ) from exc
+
+    props = page.get("properties", {})
+    title_items = props.get("Name", {}).get("title", [])
+    saved_title = title_items[0].get("plain_text") if title_items else None
+
+    return {
+        "status": "created",
+        "id": page.get("id"),
+        "url": page.get("url"),
+        "title": saved_title,
+    }
+
+# endregion
