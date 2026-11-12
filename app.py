@@ -18,3 +18,6 @@ app.include_router(notion_router)
 def health():
     return {"status": "ok"}
 
+
+from routes.jobs import router as jobs_router
+app.include_router(jobs_router)
