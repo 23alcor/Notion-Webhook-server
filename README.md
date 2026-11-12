@@ -386,3 +386,16 @@ seconds the server should process the event and update the page.
 - **No open inbound ports.** The Pi is reachable only through the Cloudflare Tunnel (web + SSH), so nothing is exposed directly to the internet.
 - **Least-privilege Google access.** Calendar uses the read-only `calendar.readonly` scope.
 - **Planned hardening:** verify Notion's webhook signature (HMAC) on `/notion-webhook`, and set an OpenAI spend cap as a billing backstop.
+## Cloudflare Worker (replaces the Pi)
+
+`worker/` is a JavaScript port of this server for Cloudflare Workers: the same routes, auth and responses, with the
+hourly refresh as a Cron Trigger instead of `webhook-refresh.timer`. Google Calendar uses the refresh token from
+`token.json` directly, so no Google libraries are needed.
+
+```bash
+cd worker
+cp wrangler.example.jsonc wrangler.jsonc   # fill in the Notion ids and your domain
+npx wrangler secret put NOTION_TOKEN       # and the other secrets listed in wrangler.example.jsonc
+npm test
+npx wrangler deploy
+```

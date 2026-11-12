@@ -1,0 +1,23 @@
+// Copy to wrangler.jsonc (git-ignored) and fill in. Secrets go through `npx wrangler secret put NAME`:
+//   NOTION_TOKEN, NOTION_WEBHOOK_SECRET, TEST_TOKEN, OPENAI_API_KEY,
+//   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN (from token.json), COMMAND_CENTER_CAPTURE_TOKEN
+{
+  "name": "notion-webhook",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "api.example.com", "custom_domain": true }],
+  "triggers": { "crons": ["0 * * * *"] },   // refresh both callouts hourly
+  "observability": { "enabled": true },
+  "vars": {
+    "TIMEZONE": "America/New_York",
+    "OWNER_NAME": "",                          // used in the greeting
+    "EXCLUDED_CALENDARS": "",                  // comma-separated calendar ids to skip
+    "COMMAND_CENTER_URL": "",                  // https origin that receives /jobs captures
+    "NOTION_TODO_ID": "",
+    "NOTION_TASKS_ID": "",
+    "NOTION_PROJECTS_ID": "",
+    "NOTION_LINKS_ID": "",
+    "NOTION_DEADLINE_BLOCK_ID": "",
+    "NOTION_IMPORTANT_THINGS_BLOCK_ID": ""
+  }
+}

@@ -27,3 +27,9 @@ htmlcov/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# Worker
+worker/wrangler.jsonc
+worker/.dev.vars
+worker/.wrangler/
+worker/node_modules/
